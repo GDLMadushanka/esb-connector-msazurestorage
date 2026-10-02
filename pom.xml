@@ -33,7 +33,10 @@
         <automation.framework.utils.version>4.4.2</automation.framework.utils.version>
         <automation.framework.version>4.4.3</automation.framework.version>
         <emma.version>2.1.5320</emma.version>
-        <synapse.version>2.1.7-wso2v95</synapse.version>
+        <!-- The stream operator SPI (org.apache.synapse.stream) exists only from 4.1.0. The
+             runtime supplies synapse, so these are provided: a bundled copy would give a different
+             StreamOperator class and every instanceof in the pipeline would quietly fail. -->
+        <synapse.version>4.1.0-wso2v68-SNAPSHOT</synapse.version>
         <carbon.mediation.version>4.7.52</carbon.mediation.version>
         <json.version>2.0.0.wso2v1</json.version>
         <org.testng.version>6.1.1</org.testng.version>
@@ -46,6 +49,7 @@
         <skip-tests>true</skip-tests>
         <gson.version>2.10.1</gson.version>
         <azure.netty.version>1.13.5</azure.netty.version>
+        <junit.version>4.13.2</junit.version>
     </properties>
 
     <dependencies>
@@ -53,11 +57,13 @@
             <groupId>org.apache.synapse</groupId>
             <artifactId>synapse-core</artifactId>
             <version>${synapse.version}</version>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.apache.synapse</groupId>
             <artifactId>synapse-commons</artifactId>
             <version>${synapse.version}</version>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.json.wso2</groupId>
@@ -221,6 +227,12 @@
             <artifactId>gson</artifactId>
             <version>${gson.version}</version>
         </dependency>
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
     <scm>
         <connection>scm:git:https://github.com/wso2-extensions/esb-connector-msazurestorage.git</connection>
@@ -244,8 +256,11 @@
                 <version>3.7.0</version>
                 <configuration>
                     <encoding>UTF-8</encoding>
-                    <source>1.8</source>
-                    <target>1.8</target>
+                    <!-- 17, matching esb-connector-streaming and esb-connector-file. The stream
+                         operator SPI lives in synapse-core, which is built for 21, so this module
+                         must be compiled by a JDK that can read those class files. -->
+                    <source>17</source>
+                    <target>17</target>
                 </configuration>
             </plugin>
             <plugin>
@@ -273,56 +288,92 @@
             </plugin>
             <plugin>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>2.12.4</version>
+                <version>2.22.2</version>
                 <inherited>false</inherited>
-                <configuration>
-                    <argLine>-Xms512m -Xmx1024m -XX:MaxPermSize=128m</argLine>
-                    <disableXmlReport>false</disableXmlReport>
-                    <parallel>false</parallel>
-                    <testFailureIgnore>true</testFailureIgnore>
-                    <suiteXmlFiles>
-                        <suiteXmlFile>src/test/resources/testng.xml</suiteXmlFile>
-                    </suiteXmlFiles>
-                    <systemProperties>
-                        <property>
-                            <name>framework.resource.location</name>
-                            <value>
-                                ${basedir}/src/test/resources/
-                            </value>
-                        </property>
-                        <property>
-                            <name>server.list</name>
-                            <value>
-                                ESB
-                            </value>
-                        </property>
-                        <property>
-                            <name>usedefaultlisteners</name>
-                            <value>false</value>
-                        </property>
-                        <sec.verifier.dir>${basedir}/target/security-verifier/</sec.verifier.dir>
-                        <maven.test.haltafterfailure>false</maven.test.haltafterfailure>
-                        <carbon.zip>
-                            ${basedir}/repository/wso2ei-${product.ei.version}.zip
-                        </carbon.zip>
-                        <instr.file>${basedir}/src/test/resources/instrumentation.txt</instr.file>
-                        <filters.file>${basedir}/src/test/resources/filters.txt</filters.file>
-                        <property>
-                            <name>connector_repo</name>
-                            <value>${basedir}/target</value>
-                        </property>
-                        <property>
-                            <name>connector_name</name>
-                            <value>${connector.name}</value>
-                        </property>
-                        <property>
-                            <name>connector_version</name>
-                            <value>${project.version}</value>
-                        </property>
-                    </systemProperties>
-                    <workingDirectory>${basedir}/target</workingDirectory>
-                    <skipTests>${skip-tests}</skipTests>
-                </configuration>
+                <dependencies>
+                    <!-- Pins the JUnit provider for the unit tests below. Both JUnit and TestNG are on
+                         the test classpath and surefire would otherwise pick TestNG for everything,
+                         which reports "No test suite found" and runs nothing. If the integration suite
+                         in default-test is ever re-enabled it will need surefire-testng added here. -->
+                    <dependency>
+                        <groupId>org.apache.maven.surefire</groupId>
+                        <artifactId>surefire-junit4</artifactId>
+                        <version>2.22.2</version>
+                    </dependency>
+                </dependencies>
+                <executions>
+                    <!-- The pre-existing TestNG integration suite. Needs a running ESB, ignores test
+                         failures, and is skipped unless -Dskip-tests=false. Moved from the plugin-level
+                         configuration into its own execution so that it no longer applies to every
+                         execution of this plugin. -->
+                    <execution>
+                        <id>default-test</id>
+                        <configuration>
+                            <argLine>-Xms512m -Xmx1024m -XX:MaxPermSize=128m</argLine>
+                            <disableXmlReport>false</disableXmlReport>
+                            <parallel>false</parallel>
+                            <testFailureIgnore>true</testFailureIgnore>
+                            <suiteXmlFiles>
+                                <suiteXmlFile>src/test/resources/testng.xml</suiteXmlFile>
+                            </suiteXmlFiles>
+                            <systemProperties>
+                                <property>
+                                    <name>framework.resource.location</name>
+                                    <value>
+                                        ${basedir}/src/test/resources/
+                                    </value>
+                                </property>
+                                <property>
+                                    <name>server.list</name>
+                                    <value>
+                                        ESB
+                                    </value>
+                                </property>
+                                <property>
+                                    <name>usedefaultlisteners</name>
+                                    <value>false</value>
+                                </property>
+                                <sec.verifier.dir>${basedir}/target/security-verifier/</sec.verifier.dir>
+                                <maven.test.haltafterfailure>false</maven.test.haltafterfailure>
+                                <carbon.zip>
+                                    ${basedir}/repository/wso2ei-${product.ei.version}.zip
+                                </carbon.zip>
+                                <instr.file>${basedir}/src/test/resources/instrumentation.txt</instr.file>
+                                <filters.file>${basedir}/src/test/resources/filters.txt</filters.file>
+                                <property>
+                                    <name>connector_repo</name>
+                                    <value>${basedir}/target</value>
+                                </property>
+                                <property>
+                                    <name>connector_name</name>
+                                    <value>${connector.name}</value>
+                                </property>
+                                <property>
+                                    <name>connector_version</name>
+                                    <value>${project.version}</value>
+                                </property>
+                            </systemProperties>
+                            <workingDirectory>${basedir}/target</workingDirectory>
+                            <skipTests>${skip-tests}</skipTests>
+                        </configuration>
+                    </execution>
+                    <!-- Unit tests: plain JUnit, no server, and they must fail the build. -->
+                    <execution>
+                        <id>unit-tests</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <skipTests>false</skipTests>
+                            <testFailureIgnore>false</testFailureIgnore>
+                            <argLine>-Xms256m -Xmx512m</argLine>
+                            <includes>
+                                <include>**/stream/*Test.java</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <artifactId>maven-dependency-plugin</artifactId>

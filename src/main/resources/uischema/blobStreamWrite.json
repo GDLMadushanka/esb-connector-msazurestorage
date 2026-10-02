@@ -1,0 +1,124 @@
+{
+    "connectorName": "msazurestorage",
+    "operationName": "blobStreamWrite",
+    "title": "Blob Stream Write",
+    "help": "<h1>Blob Stream Write</h1> <b>Streams a byte chain into an Azure block blob. Only valid as the sink of a streamPipeline &mdash; it reads the chain to completion rather than mediating a message, so it cannot be used in an ordinary sequence. Use Upload Blob for that. The upload is chunked and resumable, and the blob appears only when the transfer succeeds.</b>",
+    "elements": [
+        {
+            "type": "attributeGroup",
+            "value": {
+                "groupName": "General",
+                "elements": [
+                    {
+                        "type": "attribute",
+                        "value": {
+                            "name": "configRef",
+                            "displayName": "Connection",
+                            "inputType": "connection",
+                            "allowedConnectionTypes": [
+                                "msazurestorage"
+                            ],
+                            "defaultType": "connection.msazurestorage",
+                            "defaultValue": "",
+                            "required": "true",
+                            "helpTip": "Connection to be used"
+                        }
+                    },
+                    {
+                        "type": "attributeGroup",
+                        "value": {
+                            "groupName": "Basic",
+                            "elements": [
+                                {
+                                    "type": "attribute",
+                                    "value": {
+                                        "name": "container",
+                                        "displayName": "Container name",
+                                        "inputType": "stringOrExpression",
+                                        "defaultValue": "",
+                                        "required": "true",
+                                        "helpTip": "Name of the container the blob is written to."
+                                    }
+                                },
+                                {
+                                    "type": "attribute",
+                                    "value": {
+                                        "name": "blob",
+                                        "displayName": "Blob name",
+                                        "inputType": "stringOrExpression",
+                                        "defaultValue": "",
+                                        "required": "true",
+                                        "helpTip": "Name of the blob, including any virtual directory prefix."
+                                    }
+                                },
+                                {
+                                    "type": "attribute",
+                                    "value": {
+                                        "name": "contentType",
+                                        "displayName": "Content Type",
+                                        "inputType": "stringOrExpression",
+                                        "defaultValue": "",
+                                        "required": "false",
+                                        "helpTip": "Content-Type recorded on the blob."
+                                    }
+                                },
+                                {
+                                    "type": "attribute",
+                                    "value": {
+                                        "name": "overwrite",
+                                        "displayName": "Overwrite",
+                                        "inputType": "booleanOrExpression",
+                                        "defaultValue": "true",
+                                        "required": "false",
+                                        "helpTip": "Uncheck to fail rather than replace an existing blob."
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "type": "attributeGroup",
+                        "value": {
+                            "groupName": "Advanced",
+                            "elements": [
+                                {
+                                    "type": "attribute",
+                                    "value": {
+                                        "name": "blockSize",
+                                        "displayName": "Block Size",
+                                        "inputType": "stringOrExpression",
+                                        "defaultValue": "",
+                                        "required": "false",
+                                        "helpTip": "Size of each uploaded block, for example 32MB. Leave empty to derive one from the source size. This sets the largest blob that can be written, because Azure allows 50,000 blocks per blob: 4MB caps the blob at 195GB, 32MB at 1.53TB and 64MB at 3TB. Each block in flight also holds this many bytes of heap."
+                                    }
+                                },
+                                {
+                                    "type": "attribute",
+                                    "value": {
+                                        "name": "uploadConcurrency",
+                                        "displayName": "Upload Concurrency",
+                                        "inputType": "integerOrExpression",
+                                        "defaultValue": "4",
+                                        "required": "false",
+                                        "helpTip": "Number of blocks staged at once, between 1 and 256. Higher values saturate a wide link; the pool holds Block Size x this many bytes of heap for the whole transfer. 1 makes the upload sequential."
+                                    }
+                                },
+                                {
+                                    "type": "attribute",
+                                    "value": {
+                                        "name": "verifyBlocks",
+                                        "displayName": "Verify Blocks",
+                                        "inputType": "booleanOrExpression",
+                                        "defaultValue": "true",
+                                        "required": "false",
+                                        "helpTip": "Sends each block's MD5 so Azure rejects a block that arrived corrupted, failing the request with 400 rather than committing a silently wrong blob. Verification is per block as it lands, not at the end of the upload. Costs tens of milliseconds per block; leave on unless you have measured that it matters."
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+    ]
+}

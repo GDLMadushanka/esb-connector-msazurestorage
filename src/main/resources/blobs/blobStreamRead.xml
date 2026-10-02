@@ -1,0 +1,62 @@
+<!--
+   Copyright (c) 2026, WSO2 LLC. (http://www.wso2.org) All Rights Reserved.
+
+   WSO2 LLC. licenses this file to you under the Apache License,
+   Version 2.0 (the "License"); you may not use this file except
+   in compliance with the License.
+   You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing,
+   software distributed under the License is distributed on an
+   "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+   KIND, either express or implied. See the License for the
+   specific language governing permissions and limitations
+   under the License.
+-->
+<!--
+   A stream operator, not an ordinary operation. Only valid inside a <streamPipeline>, where it is the
+   source. Invoking it from a sequence fails with a message pointing at downloadBlob.
+
+   No <property> mediators: the pipeline does not mediate this template - it takes the StreamSource out
+   of the class mediator and drives it directly, so this <sequence> never executes and a <property>
+   copy would silently never be set. Parameters arrive through the function context that
+   bindParameters() pushes, which is why the class reads them with lookupTemplateParamater.
+
+   configKey is an attribute on the pipeline stage rather than a parameter here, and binding mediates
+   that local entry as an ordinary template - so the init template's own <property name="name"/> does
+   run, which is how the connection is found.
+
+       <azure.blobStreamRead configKey="connBlob" container="inbox" blob="reports/in.csv"/>
+-->
+<template xmlns="http://ws.apache.org/ns/synapse" name="blobStreamRead">
+    <parameter name="container" description="The container holding the blob."/>
+    <parameter name="blob" description="The blob name, including any virtual directory prefix."/>
+    <parameter isMandatory="false" name="readConcurrency"
+               description="Ranged GETs in flight at once, default 4. These threads wait on the network
+                            rather than on a core, so the count is not tied to CPUs and the upper bound
+                            of 256 is a typo guard, not a ration. readBlockSize x readConcurrency is
+                            held in heap per transfer: above a quarter of the heap the operator logs
+                            what it is holding, and only a figure at or above the whole heap is
+                            refused, because that cannot run."/>
+    <parameter isMandatory="false" name="readBlockSize"
+               description="Bytes per ranged GET, e.g. 32MB. Default 8MB. On a far-region account this
+                            matters more than readConcurrency: throughput there is dominated by
+                            per-request cost, so fewer larger requests beats more parallel ones and
+                            costs no extra threads. Above 4MB Azure will not compute a per-range MD5,
+                            so range verification switches off and says so in the log. Held memory is
+                            readBlockSize x readConcurrency."/>
+    <parameter isMandatory="false" name="verifyBlocks"
+               description="false to skip per-range MD5 verification. Only has effect when
+                            readBlockSize is 4MB or less, which is the largest range Azure will hash."/>
+    <parameter isMandatory="false" name="readTimeout"
+               description="Per-range liveness bound, e.g. 300s or 5m. Unset, it is derived from the
+                            range size against a floor rate. Set it where the link and the distance to
+                            the storage account are known: the derived floor was chosen against
+                            throughput measured in one environment, and a constant that fits a lab does
+                            not fit every deployment. It bounds a dead connection, not a slow one."/>
+    <sequence>
+        <class name="org.wso2.carbon.connector.azure.storage.stream.AzureBlobStreamRead"/>
+    </sequence>
+</template>

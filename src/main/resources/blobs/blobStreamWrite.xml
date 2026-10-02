@@ -1,0 +1,59 @@
+<!--
+   Copyright (c) 2026, WSO2 LLC. (http://www.wso2.org) All Rights Reserved.
+
+   WSO2 LLC. licenses this file to you under the Apache License,
+   Version 2.0 (the "License"); you may not use this file except
+   in compliance with the License.
+   You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing,
+   software distributed under the License is distributed on an
+   "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+   KIND, either express or implied. See the License for the
+   specific language governing permissions and limitations
+   under the License.
+-->
+<!--
+   A stream operator, not an ordinary operation. Only valid inside a <streamPipeline>, where it is the
+   sink: it reads the byte chain to completion rather than mediating a message. Invoking it from a
+   sequence fails with a message pointing at uploadBlob.
+
+   There are deliberately no <property> mediators here. The pipeline does NOT mediate this template -
+   it resolves the element to an InvokeMediator, takes the StreamSink out of the class mediator, and
+   drives it directly. So this <sequence> never executes, and anything written as a <property> would
+   silently never be set. The parameters reach the operator because bindParameters() pushes a function
+   context around the call, which is why AzureBlobStreamWrite reads them with lookupTemplateParamater.
+
+   The connection arrives differently again: configKey is an attribute on the pipeline stage, not a
+   parameter here, and bindParameters() mediates that local entry - which is an ordinary template, so
+   its own <property name="name"/> does run and AzureUtil.getConnectionName finds it.
+
+       <azure.blobStreamWrite name="upload" configKey="connBlob" container="inbox" blob="out.csv"/>
+
+   One instance serves every concurrent run, so the class holds nothing in a field.
+-->
+<template xmlns="http://ws.apache.org/ns/synapse" name="blobStreamWrite">
+    <parameter name="container" description="The container the blob is written to."/>
+    <parameter name="blob" description="The blob name, including any virtual directory prefix."/>
+    <parameter isMandatory="false" name="blockSize"
+               description="Block size, e.g. 32MB. Omit to derive one from the source size. This sets
+                            the largest blob that can be written: Azure allows 50,000 blocks, so 4MB
+                            caps the blob at 195GB and 32MB at 1.53TB."/>
+    <parameter isMandatory="false" name="contentType" description="Content-Type recorded on the blob."/>
+    <parameter isMandatory="false" name="overwrite"
+               description="false to fail rather than replace an existing blob. Defaults to true."/>
+    <parameter isMandatory="false" name="uploadConcurrency"
+               description="Blocks staged at once, 1-256, default 4. The pool holds
+                            blockSize x uploadConcurrency bytes of heap for the whole transfer, and
+                            only a combination larger than the entire heap is refused. 1 makes the
+                            upload sequential."/>
+    <parameter isMandatory="false" name="verifyBlocks"
+               description="false to skip the per-block MD5. On by default: Azure compares the hash
+                            against what arrived and rejects a corrupted block with 400, so the
+                            failure is a retry rather than a silently wrong blob."/>
+    <sequence>
+        <class name="org.wso2.carbon.connector.azure.storage.stream.AzureBlobStreamWrite"/>
+    </sequence>
+</template>

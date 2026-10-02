@@ -34,5 +34,17 @@
             <file>downloadBlob.xml</file>
             <description>Downloads the blob from the Azure storage.</description>
         </component>
+        <component name="blobStreamRead">
+            <file>blobStreamRead.xml</file>
+            <displayName>Blob Stream Read</displayName>
+            <description>Opens an Azure blob as the head of a stream pipeline. Only valid inside a
+                streamPipeline.</description>
+        </component>
+        <component name="blobStreamWrite">
+            <file>blobStreamWrite.xml</file>
+            <displayName>Blob Stream Write</displayName>
+            <description>Streams a byte chain into an Azure block blob. A stream pipeline sink:
+                chunked, resumable, and the blob appears only when the transfer succeeds.</description>
+        </component>
     </subComponents>
 </component>
