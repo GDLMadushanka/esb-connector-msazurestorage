@@ -1,113 +1,130 @@
 {
-  "connectorName": "msazurestorage",
-  "operationName": "blobStreamRead",
-  "title": "Blob Stream Read",
-  "help": "<h1>Blob Stream Read</h1> <b>Opens an Azure blob as the head of a streamPipeline. Only valid as a pipeline source &mdash; it produces a byte chain rather than mediating a message, so it cannot be used in an ordinary sequence. Use Download Blob for that. The blob is read as a stream, so its size is not bounded by memory.</b>",
-  "elements": [
-    {
-      "type": "attributeGroup",
-      "value": {
-        "groupName": "General",
-        "elements": [
-          {
-            "type": "attribute",
-            "value": {
-              "name": "configRef",
-              "displayName": "Connection",
-              "inputType": "connection",
-              "allowedConnectionTypes": [
-                "msazurestorage"
-              ],
-              "defaultType": "connection.msazurestorage",
-              "defaultValue": "",
-              "required": "true",
-              "helpTip": "Connection to be used"
-            }
-          },
-          {
+    "connectorName": "msazurestorage",
+    "operationName": "blobStreamRead",
+    "title": "Blob Stream Read",
+    "help": "<h1>Blob Stream Read</h1> <b>Opens an Azure blob as the head of a streamSequence. Only valid as a pipeline source &mdash; it produces a byte chain rather than mediating a message, so it cannot be used in an ordinary sequence. Use Download Blob for that. The blob is read as a stream, so its size is not bounded by memory.</b>",
+    "elements": [
+        {
             "type": "attributeGroup",
             "value": {
-              "groupName": "Basic",
-              "elements": [
-                {
-                  "type": "attribute",
-                  "value": {
-                    "name": "container",
-                    "displayName": "Container name",
-                    "inputType": "stringOrExpression",
-                    "defaultValue": "",
-                    "required": "true",
-                    "helpTip": "Name of the container holding the blob."
-                  }
-                },
-                {
-                  "type": "attribute",
-                  "value": {
-                    "name": "blob",
-                    "displayName": "Blob name",
-                    "inputType": "stringOrExpression",
-                    "defaultValue": "",
-                    "required": "true",
-                    "helpTip": "Name of the blob, including any virtual directory prefix."
-                  }
-                }
-              ]
+                "groupName": "General",
+                "elements": [
+                    {
+                        "type": "attribute",
+                        "value": {
+                            "name": "configRef",
+                            "displayName": "Connection",
+                            "inputType": "connection",
+                            "allowedConnectionTypes": [
+                                "msazurestorage"
+                            ],
+                            "defaultType": "connection.msazurestorage",
+                            "defaultValue": "",
+                            "required": "true",
+                            "helpTip": "Connection to be used"
+                        }
+                    },
+                    {
+                        "type": "attributeGroup",
+                        "value": {
+                            "groupName": "Basic",
+                            "elements": [
+                                {
+                                    "type": "attribute",
+                                    "value": {
+                                        "name": "container",
+                                        "displayName": "Container name",
+                                        "inputType": "stringOrExpression",
+                                        "defaultValue": "",
+                                        "required": "true",
+                                        "helpTip": "Name of the container holding the blob."
+                                    }
+                                },
+                                {
+                                    "type": "attribute",
+                                    "value": {
+                                        "name": "blob",
+                                        "displayName": "Blob name",
+                                        "inputType": "stringOrExpression",
+                                        "defaultValue": "",
+                                        "required": "true",
+                                        "helpTip": "Name of the blob, including any virtual directory prefix."
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "type": "attributeGroup",
+                        "value": {
+                            "groupName": "Advanced",
+                            "elements": [
+                                {
+                                    "type": "attribute",
+                                    "value": {
+                                        "name": "readBlockSize",
+                                        "displayName": "Read Block Size",
+                                        "inputType": "integerOrExpression",
+                                        "defaultValue": "",
+                                        "required": "false",
+                                        "helpTip": "Bytes per ranged GET, e.g. 32MB. Default 8MB. On a distant storage account this is the strongest lever on throughput, because the cost is per request rather than per byte - fewer, larger requests beat more parallel ones and use no extra threads. Above 4MB Azure will not compute a per-range MD5, so range verification turns off. Held memory is this times Read Concurrency. The number only \u2014 choose the unit below."
+                                    }
+                                },
+                                {
+                                    "type": "attribute",
+                                    "value": {
+                                        "name": "readBlockSizeUnit",
+                                        "displayName": "Read Block Size Unit",
+                                        "inputType": "comboOrExpression",
+                                        "defaultValue": "MB",
+                                        "required": "false",
+                                        "comboValues": [
+                                            "B",
+                                            "KB",
+                                            "MB",
+                                            "GB"
+                                        ],
+                                        "helpTip": "Unit for Read Block Size. KB, MB and GB are binary (1024-based), matching the sizes the service itself uses."
+                                    }
+                                },
+                                {
+                                    "type": "attribute",
+                                    "value": {
+                                        "name": "readConcurrency",
+                                        "displayName": "Read Concurrency",
+                                        "inputType": "integerOrExpression",
+                                        "defaultValue": "4",
+                                        "required": "false",
+                                        "helpTip": "Ranged GETs in flight at once, default 4. These threads wait on the network, not on a core, so this is not bounded by CPUs; the upper bound of 256 is there to catch a typo. Read Block Size x Read Concurrency is held in heap for the whole transfer \u2014 above a quarter of the heap that is logged, and only a combination at or above the entire heap is refused, because it cannot run."
+                                    }
+                                },
+                                {
+                                    "type": "attribute",
+                                    "value": {
+                                        "name": "verifyBlocks",
+                                        "displayName": "Verify Ranges",
+                                        "inputType": "booleanOrExpression",
+                                        "defaultValue": "true",
+                                        "required": "false",
+                                        "helpTip": "Asks Azure for a Content-MD5 per range and verifies it. Only available when Read Block Size is 4MB or less."
+                                    }
+                                },
+                                {
+                                    "type": "attribute",
+                                    "value": {
+                                        "name": "readTimeout",
+                                        "displayName": "Read Timeout",
+                                        "inputType": "stringOrExpression",
+                                        "defaultValue": "",
+                                        "required": "false",
+                                        "helpTip": "Per-range liveness bound, e.g. 300s or 5m. Leave empty to derive one from the range size. Set it when the link speed and the distance to the storage account are known - the derived default was calibrated in one environment and will be too generous on a fast link and too tight on a slow one. It is there to catch a dead connection, not to cap a slow one."
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
             }
-          },
-          {
-            "type": "attributeGroup",
-            "value": {
-              "groupName": "Advanced",
-              "elements": [
-                {
-                  "type": "attribute",
-                  "value": {
-                    "name": "readBlockSize",
-                    "displayName": "Read Block Size",
-                    "inputType": "stringOrExpression",
-                    "defaultValue": "",
-                    "required": "false",
-                    "helpTip": "Bytes per ranged GET, e.g. 32MB. Default 8MB. On a distant storage account this is the strongest lever on throughput, because the cost is per request rather than per byte - fewer, larger requests beat more parallel ones and use no extra threads. Above 4MB Azure will not compute a per-range MD5, so range verification turns off. Held memory is this times Read Concurrency."
-                  }
-                },
-                {
-                  "type": "attribute",
-                  "value": {
-                    "name": "readConcurrency",
-                    "displayName": "Read Concurrency",
-                    "inputType": "integerOrExpression",
-                    "defaultValue": "4",
-                    "required": "false",
-                    "helpTip": "Ranged GETs in flight at once, default 4. These threads wait on the network, not on a core, so this is not bounded by CPUs; the upper bound of 256 is there to catch a typo. Read Block Size x Read Concurrency is held in heap for the whole transfer \u2014 above a quarter of the heap that is logged, and only a combination at or above the entire heap is refused, because it cannot run."
-                  }
-                },
-                {
-                  "type": "attribute",
-                  "value": {
-                    "name": "verifyBlocks",
-                    "displayName": "Verify Ranges",
-                    "inputType": "booleanOrExpression",
-                    "defaultValue": "true",
-                    "required": "false",
-                    "helpTip": "Asks Azure for a Content-MD5 per range and verifies it. Only available when Read Block Size is 4MB or less."
-                  }
-                },
-                {
-                  "type": "attribute",
-                  "value": {
-                    "name": "readTimeout",
-                    "displayName": "Read Timeout",
-                    "inputType": "stringOrExpression",
-                    "defaultValue": "",
-                    "required": "false",
-                    "helpTip": "Per-range liveness bound, e.g. 300s or 5m. Leave empty to derive one from the range size. Set it when the link speed and the distance to the storage account are known - the derived default was calibrated in one environment and will be too generous on a fast link and too tight on a slow one. It is there to catch a dead connection, not to cap a slow one."
-                  }
-                }
-              ]
-            }
-          }
-        ]
-      }
-    }
-  ]
+        }
+    ]
 }

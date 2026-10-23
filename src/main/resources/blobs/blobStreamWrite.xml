@@ -16,7 +16,7 @@
    under the License.
 -->
 <!--
-   A stream operator, not an ordinary operation. Only valid inside a <streamPipeline>, where it is the
+   A stream operator, not an ordinary operation. Only valid inside a <streamSequence>, where it is the
    sink: it reads the byte chain to completion rather than mediating a message. Invoking it from a
    sequence fails with a message pointing at uploadBlob.
 
@@ -41,6 +41,9 @@
                description="Block size, e.g. 32MB. Omit to derive one from the source size. This sets
                             the largest blob that can be written: Azure allows 50,000 blocks, so 4MB
                             caps the blob at 195GB and 32MB at 1.53TB."/>
+    <parameter isMandatory="false" name="blockSizeUnit"
+               description="Unit for blockSize: B, KB, MB or GB. Defaults to B, so a bare blockSize
+                            is a plain byte count."/>
     <parameter isMandatory="false" name="contentType" description="Content-Type recorded on the blob."/>
     <parameter isMandatory="false" name="overwrite"
                description="false to fail rather than replace an existing blob. Defaults to true."/>
@@ -49,6 +52,12 @@
                             blockSize x uploadConcurrency bytes of heap for the whole transfer, and
                             only a combination larger than the entire heap is refused. 1 makes the
                             upload sequential."/>
+    <parameter isMandatory="false" name="checkpointFrequency"
+               description="Blocks between checkpoints, default 1. At most this many blocks are
+                            re-uploaded after a failure. A staged block is invisible until the blob
+                            is committed and re-staging the same block is idempotent, so raising it
+                            costs only bandwidth on a resume - never a repeated side effect - and
+                            buys one fewer fsync per block."/>
     <parameter isMandatory="false" name="verifyBlocks"
                description="false to skip the per-block MD5. On by default: Azure compares the hash
                             against what arrived and rejects a corrupted block with 400, so the

@@ -37,13 +37,13 @@
         <component name="blobStreamRead">
             <file>blobStreamRead.xml</file>
             <displayName>Blob Stream Read</displayName>
-            <description>Opens an Azure blob as the head of a stream pipeline. Only valid inside a
-                streamPipeline.</description>
+            <description>Opens an Azure blob as the head of a stream sequence. Only valid inside a
+                streamSequence.</description>
         </component>
         <component name="blobStreamWrite">
             <file>blobStreamWrite.xml</file>
             <displayName>Blob Stream Write</displayName>
-            <description>Streams a byte chain into an Azure block blob. A stream pipeline sink:
+            <description>Streams a byte chain into an Azure block blob. A stream sequence sink:
                 chunked, resumable, and the blob appears only when the transfer succeeds.</description>
         </component>
     </subComponents>

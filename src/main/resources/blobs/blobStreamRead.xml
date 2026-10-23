@@ -16,7 +16,7 @@
    under the License.
 -->
 <!--
-   A stream operator, not an ordinary operation. Only valid inside a <streamPipeline>, where it is the
+   A stream operator, not an ordinary operation. Only valid inside a <streamSequence>, where it is the
    source. Invoking it from a sequence fails with a message pointing at downloadBlob.
 
    No <property> mediators: the pipeline does not mediate this template - it takes the StreamSource out
@@ -47,6 +47,8 @@
                             costs no extra threads. Above 4MB Azure will not compute a per-range MD5,
                             so range verification switches off and says so in the log. Held memory is
                             readBlockSize x readConcurrency."/>
+    <parameter isMandatory="false" name="readBlockSizeUnit"
+               description="Unit for readBlockSize: B, KB, MB or GB. Defaults to MB."/>
     <parameter isMandatory="false" name="verifyBlocks"
                description="false to skip per-range MD5 verification. Only has effect when
                             readBlockSize is 4MB or less, which is the largest range Azure will hash."/>

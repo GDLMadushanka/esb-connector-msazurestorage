@@ -2,7 +2,7 @@
     "connectorName": "msazurestorage",
     "operationName": "blobStreamWrite",
     "title": "Blob Stream Write",
-    "help": "<h1>Blob Stream Write</h1> <b>Streams a byte chain into an Azure block blob. Only valid as the sink of a streamPipeline &mdash; it reads the chain to completion rather than mediating a message, so it cannot be used in an ordinary sequence. Use Upload Blob for that. The upload is chunked and resumable, and the blob appears only when the transfer succeeds.</b>",
+    "help": "<h1>Blob Stream Write</h1> <b>Streams a byte chain into an Azure block blob. Only valid as the sink of a streamSequence &mdash; it reads the chain to completion rather than mediating a message, so it cannot be used in an ordinary sequence. Use Upload Blob for that. The upload is chunked and resumable, and the blob appears only when the transfer succeeds.</b>",
     "elements": [
         {
             "type": "attributeGroup",
@@ -86,10 +86,27 @@
                                     "value": {
                                         "name": "blockSize",
                                         "displayName": "Block Size",
-                                        "inputType": "stringOrExpression",
+                                        "inputType": "integerOrExpression",
                                         "defaultValue": "",
                                         "required": "false",
-                                        "helpTip": "Size of each uploaded block, for example 32MB. Leave empty to derive one from the source size. This sets the largest blob that can be written, because Azure allows 50,000 blocks per blob: 4MB caps the blob at 195GB, 32MB at 1.53TB and 64MB at 3TB. Each block in flight also holds this many bytes of heap."
+                                        "helpTip": "Size of each uploaded block, for example 32MB. Leave empty to derive one from the source size. This sets the largest blob that can be written, because Azure allows 50,000 blocks per blob: 4MB caps the blob at 195GB, 32MB at 1.53TB and 64MB at 3TB. Each block in flight also holds this many bytes of heap. The number only \u2014 choose the unit below."
+                                    }
+                                },
+                                {
+                                    "type": "attribute",
+                                    "value": {
+                                        "name": "blockSizeUnit",
+                                        "displayName": "Block Size Unit",
+                                        "inputType": "comboOrExpression",
+                                        "defaultValue": "MB",
+                                        "required": "false",
+                                        "comboValues": [
+                                            "B",
+                                            "KB",
+                                            "MB",
+                                            "GB"
+                                        ],
+                                        "helpTip": "Unit for Block Size. KB, MB and GB are binary (1024-based), matching the sizes the service itself uses."
                                     }
                                 },
                                 {
@@ -101,6 +118,17 @@
                                         "defaultValue": "4",
                                         "required": "false",
                                         "helpTip": "Number of blocks staged at once, between 1 and 256. Higher values saturate a wide link; the pool holds Block Size x this many bytes of heap for the whole transfer. 1 makes the upload sequential."
+                                    }
+                                },
+                                {
+                                    "type": "attribute",
+                                    "value": {
+                                        "name": "checkpointFrequency",
+                                        "displayName": "Checkpoint Frequency",
+                                        "inputType": "integerOrExpression",
+                                        "defaultValue": "1",
+                                        "required": "false",
+                                        "helpTip": "Number of blocks between checkpoints. At most this many blocks are re-uploaded after a failure. A staged block is invisible until the blob is committed, and re-staging the same block is idempotent, so raising this costs only bandwidth on a resume \u2014 never a repeated side effect \u2014 and buys one fewer checkpoint write per block."
                                     }
                                 },
                                 {

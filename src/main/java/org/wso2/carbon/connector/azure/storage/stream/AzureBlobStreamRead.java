@@ -58,7 +58,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Reads an Azure blob as the head of a stream pipeline.
+ * Reads an Azure blob as the head of a stream sequence.
  *
  * <pre>
  *   &lt;azure.blobStreamRead configKey="connBlob"&gt;
@@ -98,7 +98,7 @@ public class AzureBlobStreamRead extends AbstractConnector implements StreamSour
 
     @Override
     public void connect(MessageContext messageContext) throws ConnectException {
-        throw new ConnectException(NAME + " is only valid inside a <streamPipeline>. It opens a byte"
+        throw new ConnectException(NAME + " is only valid inside a <streamSequence>. It opens a byte"
                 + " chain rather than mediating a message, so there is nothing for it to do in a"
                 + " sequence. Use msazurestorage.downloadBlob instead.");
     }
@@ -151,7 +151,7 @@ public class AzureBlobStreamRead extends AbstractConnector implements StreamSour
     /**
      * Performs <b>no I/O</b> — invariant 1. Everything is deferred into the returned stream, which
      * acquires the client and issues the first request on the first {@code read()}. Building a chain
-     * must not touch the network, or a pipeline that is never read still costs a round trip, and a
+     * must not touch the network, or a sequence that is never read still costs a round trip, and a
      * failure during the build lands somewhere with no stage to blame.
      */
     @Override
@@ -431,7 +431,7 @@ public class AzureBlobStreamRead extends AbstractConnector implements StreamSour
          *
          * <p><b>Never returns short or signals EOF on a stop.</b> It throws, because the sink reads
          * {@code -1} as "the source is finished" and would commit a truncated file as a complete one.
-         * The pipeline classifies the failure by {@code isCancelled()} rather than by exception type,
+         * The sequence classifies the failure by {@code isCancelled()} rather than by exception type,
          * so a throw here is still recorded as a stop and the run stays resumable.
          */
         private byte[] awaitHead(Future<byte[]> head) throws IOException {

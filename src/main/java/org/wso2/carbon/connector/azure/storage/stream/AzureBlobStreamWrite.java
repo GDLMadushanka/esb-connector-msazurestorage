@@ -23,8 +23,8 @@ import com.azure.storage.blob.BlobServiceClient;
 import com.azure.core.util.Context;
 import com.azure.storage.blob.specialized.BlockBlobClient;
 import org.apache.synapse.MessageContext;
-import org.apache.synapse.stream.CheckpointUnit;
 import org.apache.synapse.stream.StageArtifact;
+import org.apache.synapse.stream.StageDestination;
 import org.apache.synapse.stream.StreamContext;
 import org.apache.synapse.stream.StreamException;
 import org.apache.synapse.stream.StreamSink;
@@ -81,9 +81,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * Step one is this operator's and only this operator's: <b>do not advance the checkpoint until Azure
  * has acknowledged the block</b>. {@code unitDone} fuses the remaining steps.
  *
- * <p>Position is counted in <b>blocks</b> ({@link CheckpointUnit#RECORDS}), not bytes, because a block
- * is the unit of work here — and because {@code maxReprocessed="1"} should mean "at most one block
- * re-uploaded", which is a number a deployer can reason about, rather than one byte, which is not.
+ * <p>Position is counted in <b>blocks</b> ({@code "blocks"}), not bytes, because a block
+ * is the unit of work here — and because a {@code checkpointFrequency} of 1 should mean "at most one
+ * block re-uploaded", which is a number a deployer can reason about, rather than one byte, which is
+ * not.
  *
  * <p>Stateless: one instance serves every concurrent run, so everything below lives in locals.
  */
@@ -97,10 +98,10 @@ public class AzureBlobStreamWrite extends AbstractConnector implements StreamSin
      */
     private static final String FORMAT_VERSION = "azure-block-1";
 
-    /** How often to record a checkpoint advance. Every block would be noise on a large transfer. */
     /** How often the reader looks up while waiting on a buffer, to notice a failure or a stop. */
     private static final long BUFFER_POLL_MILLIS = 100L;
 
+    /** How often to record a checkpoint advance. Every block would be noise on a large transfer. */
     private static final int CHECKPOINT_LOG_EVERY = 10;
 
     private static final String[] PARAMETERS = {"container", "blob", "blockSize", "contentType",
@@ -108,7 +109,7 @@ public class AzureBlobStreamWrite extends AbstractConnector implements StreamSin
 
     @Override
     public void connect(MessageContext messageContext) throws ConnectException {
-        throw new ConnectException(NAME + " is only valid inside a <streamPipeline>. It consumes a byte"
+        throw new ConnectException(NAME + " is only valid inside a <streamSequence>. It consumes a byte"
                 + " chain rather than mediating a message, so there is nothing for it to do in a"
                 + " sequence. Use msazurestorage.uploadBlob instead.");
     }
@@ -151,7 +152,13 @@ public class AzureBlobStreamWrite extends AbstractConnector implements StreamSin
      */
     @Override
     public long durableByteOffset(StreamContext ctx) throws IOException {
-        StageArtifact checkpoint = ctx.artifact(CheckpointUnit.RECORDS, FORMAT_VERSION);
+        AzureBlobSettings settings;
+        try {
+            settings = settings(ctx);
+        } catch (StreamException unreadable) {
+            return -1L;
+        }
+        StageArtifact checkpoint = checkpoint(ctx, settings);
         int claimed = (int) checkpoint.resumePosition();
         if (claimed == 0) {
             return 0L;
@@ -167,14 +174,28 @@ public class AzureBlobStreamWrite extends AbstractConnector implements StreamSin
             return -1L;
         }
         try {
-            AzureBlobSettings settings = settings(ctx);
             BlockBlobClient client = blockBlobClient(ctx, settings);
             BlockIds ids = BlockIds.forJob(ctx.job().jobId());
-            return (long) resumePoint(claimed, BlockPrefix.durablePosition(client, ids)) * blockSize;
+            BlockPrefix.Staged staged = BlockPrefix.stagedOn(client, ids);
+            // Asked before the run, so nothing is discarded: this answers where the run will start,
+            // and must not alter the destination as a side effect of being asked.
+            return checkpoint.resumeAgainst(new StagedBlocks(staged), false) * blockSize;
         } catch (StreamException unreachable) {
             // Not fatal. Not knowing costs a re-read, which is slow and correct.
             return -1L;
         }
+    }
+
+    /**
+     * This stage's checkpoint, with the deployer's cadence.
+     *
+     * <p>One method rather than two call sites: {@code StreamContext.artifact} caches by name, so a
+     * second call passing a different frequency would be silently ignored in favour of the first,
+     * and which call ran first depends on whether the framework asked for a resume offset. Reading
+     * it from the settings in one place removes the question.
+     */
+    private static StageArtifact checkpoint(StreamContext ctx, AzureBlobSettings settings) {
+        return ctx.artifact("blocks", FORMAT_VERSION, settings.checkpointFrequency());
     }
 
     @Override
@@ -183,7 +204,7 @@ public class AzureBlobStreamWrite extends AbstractConnector implements StreamSin
         BlockBlobClient client = blockBlobClient(ctx, settings);
         BlockIds ids = BlockIds.forJob(ctx.job().jobId());
 
-        StageArtifact checkpoint = ctx.artifact(CheckpointUnit.RECORDS, FORMAT_VERSION);
+        StageArtifact checkpoint = checkpoint(ctx, settings);
         Long expected = ctx.job().expectedSize();
         long sourceSize = expected == null ? 0L : expected;
         long blockSize = blockSize(ctx, settings, checkpoint, sourceSize);
@@ -195,7 +216,7 @@ public class AzureBlobStreamWrite extends AbstractConnector implements StreamSin
                 ? BlockPrefix.Staged.NONE
                 : BlockPrefix.stagedOn(client, ids);
         int durable = staged.prefix();
-        int resumeAt = resumePoint(claimed, durable);
+        int resumeAt = (int) checkpoint.resumeAgainst(new StagedBlocks(staged), true);
 
         // Before the work, not after it. The re-read below can take minutes on a slow link, and a run
         // that says nothing until it finishes looks indistinguishable from one that is stuck.
@@ -372,6 +393,9 @@ public class AzureBlobStreamWrite extends AbstractConnector implements StreamSin
             return checkpointed;
         }
         checkpoint.unitDone(now, Long.toString(blockSize));
+        // The contiguous watermark, not the highest completed block -- the same number the checkpoint
+        // just took, so what a watcher sees and what a resume would use cannot disagree (ADR-0069).
+        ctx.status("staged " + now + " blocks of " + blockSize + " bytes");
         // Rate-limited proof that the position is actually moving. Without this the only evidence
         // a checkpoint exists is a row in MFT_CHECKPOINT, which is awkward to watch during a run
         // and gone once it is cleared — so a transfer that checkpoints correctly and one that does
@@ -531,22 +555,31 @@ public class AzureBlobStreamWrite extends AbstractConnector implements StreamSin
     }
 
     /**
-     * Where this attempt starts, reconciling what the checkpoint claims against what Azure holds.
+     * The staged blocks, as the framework's reconciliation sees them.
      *
-     * <p>The checkpoint is written after the work it describes, so it is normally at or behind the
-     * service. Behind is safe and ordinary. <b>Ahead</b> means it describes blocks that are not there,
-     * which nothing inside this process could have caught — so the service wins and the lower number
-     * is used.
+     * <p>Wraps an answer already in hand rather than asking again: {@code consume} needs the full set
+     * for the sparse skip and the prefix for the resume point, and both come from one
+     * {@code listBlocks}. A destination that fetched for itself would make that two network calls per
+     * resumed run to answer one question twice.
+     *
+     * <p>Which number wins, and whether anything is discarded, is
+     * {@link StageArtifact#resumeAgainst}'s to decide. This sink used to decide it in a private
+     * {@code resumePoint}, and the file sink decided the same thing in a private {@code resumeAt}.
      */
-    private int resumePoint(int claimed, int durable) {
-        if (claimed == 0) {
-            return 0;
+    private record StagedBlocks(BlockPrefix.Staged staged) implements StageDestination {
+
+        @Override
+        public long durablePosition() {
+            // The contiguous prefix, not the highest block present. A block above a gap is on the
+            // service but proves nothing about the ones below it, and resuming past the gap would
+            // commit a blob that is the right length and wrong in the middle.
+            return staged.prefix();
         }
-        if (durable < claimed) {
-            BlockPrefix.discardAbove(durable);
-            return durable;
+
+        @Override
+        public void discardAbove(long position) {
+            BlockPrefix.discardAbove((int) position);
         }
-        return claimed;
     }
 
     /**
@@ -682,7 +715,7 @@ public class AzureBlobStreamWrite extends AbstractConnector implements StreamSin
     /**
      * Captures template parameters while they are bound.
      *
-     * <p>Read through {@code lookupTemplateParamater}, not {@code getProperty}. The pipeline does not
+     * <p>Read through {@code lookupTemplateParamater}, not {@code getProperty}. The sequence does not
      * mediate this operator's template — it takes the sink out of the class mediator and drives it
      * directly — so the template's {@code <sequence>} never runs and a {@code <property>} copy of
      * these values would silently never be set. What does happen is
@@ -690,7 +723,7 @@ public class AzureBlobStreamWrite extends AbstractConnector implements StreamSin
      * the binding these lookups read, and it lasts only for the duration of the call.
      *
      * <p>The connection is the exception and arrives as a property: {@code configKey} is an attribute
-     * on the pipeline stage, and {@code bindParameters} mediates that local entry as an ordinary
+     * on the sequence stage, and {@code bindParameters} mediates that local entry as an ordinary
      * template, so the {@code init} template's own {@code <property name="name"/>} does execute. That
      * is what {@link AzureUtil#getConnectionName} then finds.
      */

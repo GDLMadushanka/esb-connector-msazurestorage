@@ -45,6 +45,32 @@ public class AzureBlobSettingsTest {
         return values;
     }
 
+    /**
+     * One block per checkpoint unless the deployer says otherwise, and the deployer may say
+     * anything at or above 1. Nothing validates the number against the block size or the source —
+     * how many blocks a failure may re-upload is theirs to size (ADR-0025).
+     */
+    @Test
+    public void theCadenceDefaultsToOneBlockAndIsTheDeployersOtherwise() {
+        assertEquals(1, AzureBlobSettings.from(params(), OP).checkpointFrequency());
+        assertEquals(64, AzureBlobSettings.from(params("checkpointFrequency", "64"), OP)
+                .checkpointFrequency());
+    }
+
+    /** Decidable without an account, so it fails at deployment rather than mid-upload. */
+    @Test
+    public void anUnusableCadenceIsRefusedAtParseTime() {
+        for (String bad : new String[]{"often", "0", "-4"}) {
+            try {
+                AzureBlobSettings.from(params("checkpointFrequency", bad), OP);
+                fail("expected rejection of checkpointFrequency '" + bad + "'");
+            } catch (IllegalArgumentException expected) {
+                assertTrue(expected.getMessage(),
+                        expected.getMessage().contains("checkpointFrequency"));
+            }
+        }
+    }
+
     @Test
     public void readsTheMandatoryPair() {
         AzureBlobSettings s = AzureBlobSettings.from(params(), OP);
@@ -71,23 +97,45 @@ public class AzureBlobSettingsTest {
         }
     }
 
+    /**
+     * The unit is its own parameter, so a form can offer it as a dropdown. The binary spellings mean
+     * the same size as the plain ones, and a bare number is bytes.
+     */
     @Test
-    public void sizeSuffixesAreBinaryAndInterchangeable() {
-        for (String written : new String[]{"33554432", "32M", "32MB", "32MiB", "32mib"}) {
-            assertEquals(written, 32 * MIB,
-                    AzureBlobSettings.from(params("blockSize", written), OP).configuredBlockSize().longValue());
+    public void aSizeIsANumberPlusItsOwnUnitParameter() {
+        for (String unit : new String[]{"MB", "MiB", "mib"}) {
+            assertEquals(unit, 32 * MIB, AzureBlobSettings
+                    .from(params("blockSize", "32", "blockSizeUnit", unit), OP)
+                    .configuredBlockSize().longValue());
         }
-        // 4096K is 4 MiB: a K suffix still has to land inside Azure's 1 MiB..4000 MiB range,
-        // which from(...) checks at parse time so a bad value is caught at deployment.
-        assertEquals(4 * MIB, AzureBlobSettings.from(params("blockSize", "4096K"), OP)
+        assertEquals("a bare number is bytes", 32 * MIB, AzureBlobSettings
+                .from(params("blockSize", "33554432"), OP).configuredBlockSize().longValue());
+        // 4096 KB is 4 MiB: it still has to land inside Azure's 1 MiB..4000 MiB range, which
+        // from(...) checks at parse time so a bad value is caught at deployment.
+        assertEquals(4 * MIB, AzureBlobSettings.from(params("blockSize", "4096", "blockSizeUnit", "KB"), OP)
                 .configuredBlockSize().longValue());
-        assertEquals(2 * 1024 * MIB, AzureBlobSettings.from(params("blockSize", "2G"), OP)
+        assertEquals(2L * 1024 * MIB, AzureBlobSettings.from(params("blockSize", "2", "blockSizeUnit", "GB"), OP)
                 .configuredBlockSize().longValue());
+    }
+
+    /**
+     * A unit written into the number is caught with a message that says where it belongs. This is
+     * exactly what someone who has not seen the unit field will type, so the fix has to be in the
+     * message rather than in a format reference.
+     */
+    @Test
+    public void aUnitInsideTheNumberIsRefusedByName() {
+        try {
+            AzureBlobSettings.from(params("blockSize", "32MB"), OP);
+            fail("expected a suffixed amount to be refused");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage(), expected.getMessage().contains("blockSizeUnit"));
+        }
     }
 
     @Test
     public void nonsenseSizesAreRefusedWithTheParameterNamed() {
-        for (String bad : new String[]{"lots", "-4M", "0", "4Q", ""}) {
+        for (String bad : new String[]{"lots", "-4", "0", ""}) {
             Map<String, String> values = params("blockSize", bad);
             if (bad.isEmpty()) {
                 assertNull(AzureBlobSettings.from(values, OP).configuredBlockSize());
@@ -105,10 +153,10 @@ public class AzureBlobSettingsTest {
     /** Below Azure's minimum or above its 4000 MiB maximum, caught at deployment not at run time. */
     @Test
     public void blockSizesOutsideAzuresRangeAreRefusedAtParseTime() {
-        for (String bad : new String[]{"512K", "8G"}) {
+        for (String[] bad : new String[][]{{"512", "KB"}, {"8", "GB"}}) {
             try {
-                AzureBlobSettings.from(params("blockSize", bad), OP);
-                fail("expected rejection of " + bad);
+                AzureBlobSettings.from(params("blockSize", bad[0], "blockSizeUnit", bad[1]), OP);
+                fail("expected rejection of " + bad[0] + bad[1]);
             } catch (IllegalArgumentException expected) {
                 assertTrue(expected.getMessage(), expected.getMessage().contains("blockSize"));
             }
@@ -175,17 +223,17 @@ public class AzureBlobSettingsTest {
         assertEquals(AzureBlobSettings.DEFAULT_READ_BLOCK, dflt.readBlockSize());
 
         assertTrue("4 MiB is hashable",
-                AzureBlobSettings.from(params("readBlockSize", "4M"), OP).verifyRanges());
+                AzureBlobSettings.from(params("readBlockSize", "4", "readBlockSizeUnit", "MB"), OP).verifyRanges());
         assertTrue("above 4 MiB Azure will not hash, so verification must report itself off",
-                !AzureBlobSettings.from(params("readBlockSize", "8M"), OP).verifyRanges());
+                !AzureBlobSettings.from(params("readBlockSize", "8", "readBlockSizeUnit", "MB"), OP).verifyRanges());
         assertTrue("verifyBlocks=false switches it off regardless of size",
-                !AzureBlobSettings.from(params("readBlockSize", "4M", "verifyBlocks", "false"), OP)
+                !AzureBlobSettings.from(params("readBlockSize", "4", "readBlockSizeUnit", "MB", "verifyBlocks", "false"), OP)
                         .verifyRanges());
 
-        for (String bad : new String[]{"512K", "128M"}) {
+        for (String[] bad : new String[][]{{"512", "KB"}, {"128", "MB"}}) {
             try {
-                AzureBlobSettings.from(params("readBlockSize", bad), OP);
-                fail("expected rejection of readBlockSize " + bad);
+                AzureBlobSettings.from(params("readBlockSize", bad[0], "readBlockSizeUnit", bad[1]), OP);
+                fail("expected rejection of readBlockSize " + bad[0] + bad[1]);
             } catch (IllegalArgumentException expected) {
                 assertTrue(expected.getMessage().contains("readBlockSize"));
             }
@@ -194,7 +242,7 @@ public class AzureBlobSettingsTest {
 
     /**
      * The deployer decides how much heap to spend; the connector refuses only arithmetic that cannot
-     * run. Same stance as maxReprocessed, which is validated against nothing and merely recorded.
+     * run. Same stance as checkpointFrequency, which is validated against nothing and merely recorded.
      */
     @Test
     public void largeBuffersAreAllowedAndOnlyTheImpossibleIsRefused() {
@@ -206,13 +254,13 @@ public class AzureBlobSettingsTest {
         if (aggressive <= AzureBlobSettings.MAX_CONCURRENCY
                 && (long) aggressive * 8 * MIB < heap) {
             AzureBlobSettings big = AzureBlobSettings.from(
-                    params("readBlockSize", "8M", "readConcurrency", String.valueOf(aggressive)), OP);
+                    params("readBlockSize", "8", "readBlockSizeUnit", "MB", "readConcurrency", String.valueOf(aggressive)), OP);
             assertEquals(aggressive, big.readConcurrency());
             assertTrue("should be worth a log line", big.readBuffersWorthRemarkingOn());
         }
 
         // Modest settings are allowed and say nothing.
-        assertTrue(!AzureBlobSettings.from(params("readBlockSize", "4M", "readConcurrency", "2"), OP)
+        assertTrue(!AzureBlobSettings.from(params("readBlockSize", "4", "readBlockSizeUnit", "MB", "readConcurrency", "2"), OP)
                 .readBuffersWorthRemarkingOn());
 
         // At or above the whole heap there is nothing to debate.
@@ -220,7 +268,7 @@ public class AzureBlobSettingsTest {
         if (impossible <= AzureBlobSettings.MAX_CONCURRENCY) {
             try {
                 AzureBlobSettings.from(
-                        params("readBlockSize", "64M", "readConcurrency", String.valueOf(impossible)), OP);
+                        params("readBlockSize", "64", "readBlockSizeUnit", "MB", "readConcurrency", String.valueOf(impossible)), OP);
                 fail("expected refusal of buffers at or above the entire heap");
             } catch (IllegalArgumentException expected) {
                 assertTrue(expected.getMessage(), expected.getMessage().contains("cannot run"));
@@ -240,7 +288,7 @@ public class AzureBlobSettingsTest {
     /** A configured size that cannot hold the probed source is refused once the source is known. */
     @Test
     public void aConfiguredBlockSizeIsCheckedAgainstTheProbedSource() {
-        AzureBlobSettings s = AzureBlobSettings.from(params("blockSize", "4M"), OP);
+        AzureBlobSettings s = AzureBlobSettings.from(params("blockSize", "4", "blockSizeUnit", "MB"), OP);
         assertEquals(4 * MIB, s.blockSizeFor(100L * MIB));
         try {
             s.blockSizeFor(1024L * 1024 * MIB);

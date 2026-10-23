@@ -18,6 +18,10 @@
 
 package org.wso2.carbon.connector.azure.storage.stream;
 
+import org.apache.synapse.stream.ByteSize;
+import org.apache.synapse.stream.CheckpointFrequency;
+import org.apache.synapse.stream.StreamException;
+
 import java.util.Locale;
 import java.util.Map;
 
@@ -59,7 +63,7 @@ public final class AzureBlobSettings {
      *
      * <p>Above this the operator logs what it is holding, and carries on. It does not refuse: how much
      * of its own heap a deployment spends on read buffers is the deployer's decision, the same way
-     * {@code maxReprocessed} is validated against nothing and merely recorded. A connector that
+     * {@code checkpointFrequency} is validated against nothing and merely recorded. A connector that
      * second-guesses that is overriding someone who knows their server better than it does.
      *
      * <p>Derived from {@code maxMemory()} rather than fixed, because the threshold worth remarking on
@@ -67,6 +71,16 @@ public final class AzureBlobSettings {
      * one.
      */
     public static final double READ_BUFFER_HEAP_SHARE = 0.25;
+
+    /**
+     * One block per checkpoint when the deployer says nothing.
+     *
+     * <p>A block is at least 32 MiB here, so this is already a coarse fsync rate — and a reprocessed
+     * block costs only a re-upload: a staged block is invisible to readers until {@code Put Block
+     * List}, and re-staging the same id is idempotent. There is no duplicate side effect to bound,
+     * only bandwidth, so the cautious default costs little and buys the tightest resume there is.
+     */
+    private static final int DEFAULT_CHECKPOINT_FREQUENCY = 1;
 
     private final String container;
     private final String blob;
@@ -78,11 +92,12 @@ public final class AzureBlobSettings {
     private final boolean verifyBlocks;
     private final long readBlockSize;
     private final Long readTimeoutSeconds;
+    private final int checkpointFrequency;
 
     private AzureBlobSettings(String container, String blob, Long blockSize, String contentType,
                               boolean overwrite, int uploadConcurrency, int readConcurrency,
                               boolean verifyBlocks, long readBlockSize,
-                              Long readTimeoutSeconds) {
+                              Long readTimeoutSeconds, int checkpointFrequency) {
         this.container = container;
         this.blob = blob;
         this.blockSize = blockSize;
@@ -93,6 +108,7 @@ public final class AzureBlobSettings {
         this.verifyBlocks = verifyBlocks;
         this.readBlockSize = readBlockSize;
         this.readTimeoutSeconds = readTimeoutSeconds;
+        this.checkpointFrequency = checkpointFrequency;
     }
 
     /**
@@ -106,9 +122,8 @@ public final class AzureBlobSettings {
         String blob = required(values, "blob", operator);
 
         Long blockSize = null;
-        String rawBlockSize = value(values, "blockSize");
-        if (rawBlockSize != null) {
-            blockSize = parseSize(rawBlockSize, operator);
+        if (value(values, "blockSize") != null) {
+            blockSize = parseSize(values, "blockSize", operator);
             // Checked without a source size: only the absolute range is decidable here. Whether it
             // fits a particular source is checked once the source has been probed.
             BlockSizing.validate(blockSize, 0L);
@@ -124,7 +139,26 @@ public final class AzureBlobSettings {
                 readWidth,
                 flag(values, "verifyBlocks", true, operator),
                 readBlock,
-                readTimeout(values, operator));
+                readTimeout(values, operator),
+                checkpointFrequency(values, operator));
+    }
+
+    /**
+     * How many blocks may pass between checkpoints, from the {@code checkpointFrequency} parameter.
+     *
+     * @see org.apache.synapse.stream.CheckpointFrequency
+     */
+    public int checkpointFrequency() {
+        return checkpointFrequency;
+    }
+
+    private static int checkpointFrequency(Map<String, String> values, String operator) {
+        try {
+            return CheckpointFrequency.of(value(values, CheckpointFrequency.PARAMETER),
+                    DEFAULT_CHECKPOINT_FREQUENCY, operator);
+        } catch (StreamException e) {
+            throw new IllegalArgumentException(e.getMessage(), e);
+        }
     }
 
     public String container() {
@@ -187,11 +221,11 @@ public final class AzureBlobSettings {
 
     /** Bytes per ranged GET on the download side. See {@link #readBlockSize()}. */
     private static long readBlockSize(Map<String, String> values, String operator) {
-        String raw = value(values, "readBlockSize");
-        if (raw == null) {
+        Long parsed = parseSize(values, "readBlockSize", operator);
+        if (parsed == null) {
             return DEFAULT_READ_BLOCK;
         }
-        long size = parseSize(raw, operator);
+        long size = parsed;
         if (size < MIN_READ_BLOCK || size > MAX_READ_BLOCK) {
             throw new IllegalArgumentException(operator + " [readBlockSize] must be between "
                     + MIN_READ_BLOCK / (1024 * 1024) + " MiB and " + MAX_READ_BLOCK / (1024 * 1024)
@@ -362,28 +396,17 @@ public final class AzureBlobSettings {
      * limits are stated that way, and a deployer writing 4000MB against a 4000 MiB ceiling should not
      * be told it is too large.
      */
-    private static long parseSize(String raw, String operator) {
-        String text = raw.trim().toUpperCase(Locale.ROOT).replace("IB", "B");
-        long multiplier = 1L;
-        if (text.endsWith("KB") || text.endsWith("K")) {
-            multiplier = 1024L;
-        } else if (text.endsWith("MB") || text.endsWith("M")) {
-            multiplier = 1024L * 1024L;
-        } else if (text.endsWith("GB") || text.endsWith("G")) {
-            multiplier = 1024L * 1024L * 1024L;
-        }
-        String digits = multiplier == 1L ? text : text.replaceAll("[KMG]B?$", "");
-        long number;
+    /**
+     * A size written as a number plus a separate unit parameter — {@code blockSize} 4 with
+     * {@code blockSizeUnit} MB. The unit is a closed set the form offers as a dropdown, so a deployer
+     * never has to know which suffixes this accepts. See {@link ByteSize}.
+     */
+    private static Long parseSize(Map<String, String> values, String amountKey, String operator) {
         try {
-            number = Long.parseLong(digits.trim());
-        } catch (NumberFormatException notANumber) {
-            throw new IllegalArgumentException(operator + " [blockSize] must be a byte count,"
-                    + " optionally suffixed K, M or G, but was '" + raw + "'");
+            return ByteSize.bytes(value(values, amountKey), value(values, amountKey + "Unit"),
+                    operator, amountKey);
+        } catch (StreamException badSize) {
+            throw new IllegalArgumentException(badSize.getMessage(), badSize);
         }
-        if (number <= 0) {
-            throw new IllegalArgumentException(
-                    operator + " [blockSize] must be positive, but was '" + raw + "'");
-        }
-        return number * multiplier;
     }
 }
