@@ -104,9 +104,6 @@ public class AzureBlobStreamWrite extends AbstractConnector implements StreamSin
     /** How often to record a checkpoint advance. Every block would be noise on a large transfer. */
     private static final int CHECKPOINT_LOG_EVERY = 10;
 
-    private static final String[] PARAMETERS = {"container", "blob", "blockSize", "contentType",
-            "overwrite", "uploadConcurrency", "verifyBlocks"};
-
     @Override
     public void connect(MessageContext messageContext) throws ConnectException {
         throw new ConnectException(NAME + " is only valid inside a <streamSequence>. It consumes a byte"
@@ -733,7 +730,7 @@ public class AzureBlobStreamWrite extends AbstractConnector implements StreamSin
             throw new StreamException(NAME + " has no message context to read its parameters from", false);
         }
         Map<String, String> values = new HashMap<>();
-        for (String parameter : PARAMETERS) {
+        for (String parameter : AzureBlobSettings.PARAMETERS) {
             Object value = ConnectorUtils.lookupTemplateParamater(message, parameter);
             if (value != null) {
                 values.put(parameter, value.toString());

@@ -92,10 +92,6 @@ public class AzureBlobStreamRead extends AbstractConnector implements StreamSour
 
     private static final String NAME = "azure.blobStreamRead";
 
-    private static final String[] PARAMETERS =
-            {"container", "blob", "readConcurrency", "readBlockSize",
-             "verifyBlocks", "readTimeout"};
-
     @Override
     public void connect(MessageContext messageContext) throws ConnectException {
         throw new ConnectException(NAME + " is only valid inside a <streamSequence>. It opens a byte"
@@ -153,11 +149,18 @@ public class AzureBlobStreamRead extends AbstractConnector implements StreamSour
      * acquires the client and issues the first request on the first {@code read()}. Building a chain
      * must not touch the network, or a sequence that is never read still costs a round trip, and a
      * failure during the build lands somewhere with no stage to blame.
+     *
+     * <p>The connection <b>name</b> is captured here, not when the stream first reads. It arrives as
+     * a {@code name} property that this stage's binding sets on the shared message, and the binding
+     * lasts only for this call: the sink binds next and sets the same property to its own
+     * connection. Read lazily, a source in front of a sink on another connector looks up the sink's
+     * connection name under the Azure connector and fails with "Connection ... for azurestorage
+     * connector does not exist". Looking a name up is not I/O, so invariant 1 still holds.
      */
     @Override
     public InputStream open(StreamContext ctx) throws StreamException {
         AzureBlobSettings settings = settings(ctx);
-        return new RangedBlobStream(ctx, settings);
+        return new RangedBlobStream(ctx, settings, connectionName(ctx));
     }
 
     /**
@@ -188,7 +191,7 @@ public class AzureBlobStreamRead extends AbstractConnector implements StreamSour
             return null;
         }
         try {
-            BlobProperties properties = blobClient(ctx, settings).getProperties();
+            BlobProperties properties = blobClient(connectionName(ctx), settings).getProperties();
             String etag = properties.getETag();
             if (etag == null || etag.isBlank()) {
                 return null;
@@ -210,7 +213,7 @@ public class AzureBlobStreamRead extends AbstractConnector implements StreamSour
             throw new StreamException(NAME + " has no message context to read its parameters from", false);
         }
         Map<String, String> values = new HashMap<>();
-        for (String parameter : PARAMETERS) {
+        for (String parameter : AzureBlobSettings.PARAMETERS) {
             Object value = ConnectorUtils.lookupTemplateParamater(message, parameter);
             if (value != null) {
                 values.put(parameter, value.toString());
@@ -223,10 +226,22 @@ public class AzureBlobStreamRead extends AbstractConnector implements StreamSour
         }
     }
 
-    private static BlobClient blobClient(StreamContext ctx, AzureBlobSettings settings)
+    /**
+     * The connection this stage was configured with. Valid only while the stage is bound, which is
+     * during {@code open()} and {@code identify()}; see {@link #open}.
+     */
+    private static String connectionName(StreamContext ctx) throws StreamException {
+        try {
+            return AzureUtil.getConnectionName(ctx.message());
+        } catch (Exception unresolved) {
+            throw new StreamException(NAME + " has no connection: " + unresolved.getMessage(),
+                    unresolved, false);
+        }
+    }
+
+    private static BlobClient blobClient(String connectionName, AzureBlobSettings settings)
             throws StreamException {
         try {
-            String connectionName = AzureUtil.getConnectionName(ctx.message());
             AzureStorageConnectionHandler connection = (AzureStorageConnectionHandler)
                     ConnectionHandler.getConnectionHandler()
                             .getConnection(AzureConstants.CONNECTOR_NAME, connectionName);
@@ -288,6 +303,8 @@ public class AzureBlobStreamRead extends AbstractConnector implements StreamSour
 
         private final StreamContext ctx;
         private final AzureBlobSettings settings;
+        /** Captured in {@code open()} while bound; the message property may since name another. */
+        private final String connectionName;
 
         private BlobClient blob;
         private BlobRequestConditions unchanged;
@@ -305,9 +322,10 @@ public class AzureBlobStreamRead extends AbstractConnector implements StreamSour
         private int rangeBytes;
         private boolean verifyRanges;
 
-        RangedBlobStream(StreamContext ctx, AzureBlobSettings settings) {
+        RangedBlobStream(StreamContext ctx, AzureBlobSettings settings, String connectionName) {
             this.ctx = ctx;
             this.settings = settings;
+            this.connectionName = connectionName;
         }
 
         /** First touch of the network, deferred out of {@code open()} by invariant 1. */
@@ -316,7 +334,7 @@ public class AzureBlobStreamRead extends AbstractConnector implements StreamSour
                 return;
             }
             try {
-                BlobClient client = blobClient(ctx, settings);
+                BlobClient client = blobClient(connectionName, settings);
                 BlobProperties properties = client.getProperties();
                 blobSize = properties.getBlobSize();
                 // Pinned for every range. A blob rewritten mid-transfer fails the next range with 412

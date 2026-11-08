@@ -82,6 +82,31 @@ public final class AzureBlobSettings {
      */
     private static final int DEFAULT_CHECKPOINT_FREQUENCY = 1;
 
+    /**
+     * Every parameter {@link #from} reads, so an operator can look them all up.
+     *
+     * <p>It lives here rather than in each operator because this is the class that knows what it
+     * reads. It used to be two arrays, one per operation, and they drifted the moment a parameter
+     * was added: {@code blockSizeUnit} and {@code checkpointFrequency} were declared in the
+     * template, parsed here, offered in the form — and absent from the write operator's list, so
+     * they were never looked up at all. {@code blockSizeUnit} failed loudly, because 4 bytes is
+     * outside Azure's block range. {@code checkpointFrequency} failed silently and simply stayed at
+     * its default, which is the worse of the two.
+     *
+     * <p>Both operations share one list. A parameter the other operation's template does not declare
+     * looks up as absent, which is what it already means here.
+     *
+     * <p><b>A parameter added to {@link #from} must be added here.</b> Nothing enforces that at
+     * compile time, so {@code AzureBlobSettingsTest.everyParameterSurvivesTheOperatorsLookup} walks
+     * this list the way an operator does and asserts the values arrive.
+     */
+    public static final java.util.List<String> PARAMETERS = java.util.List.of(
+            "container", "blob",
+            "blockSize", "blockSizeUnit",
+            "contentType", "overwrite", "uploadConcurrency", "verifyBlocks",
+            "readBlockSize", "readBlockSizeUnit", "readConcurrency", "readTimeout",
+            CheckpointFrequency.PARAMETER);
+
     private final String container;
     private final String blob;
     private final Long blockSize;

@@ -71,6 +71,63 @@ public class AzureBlobSettingsTest {
         }
     }
 
+    /**
+     * Every parameter the parser reads must be one an operator actually looks up.
+     *
+     * <p>This is the test the {@code blockSizeUnit} bug needed. The operators do not hand
+     * {@code from} the deployer's whole configuration — they walk a list of names, call
+     * {@code lookupTemplateParamater} for each, and build a map from what came back. A parameter
+     * missing from that list is never looked up, so it reaches {@code from} as absent and silently
+     * takes its default, however correctly the template declares it and however well the parser
+     * handles it.
+     *
+     * <p>So the configuration here is deliberately filtered through {@code PARAMETERS} first, the
+     * way an operator does, rather than passed straight in. Passing it straight in is what every
+     * other test in this class does, and it is precisely why they all passed while a real transfer
+     * failed with "blockSize ... was 4 bytes".
+     */
+    @Test
+    public void everyParameterSurvivesTheOperatorsLookup() {
+        Map<String, String> written = new HashMap<>();
+        written.put("container", "inbox");
+        written.put("blob", "reports/out.jsonl");
+        written.put("blockSize", "32");
+        written.put("blockSizeUnit", "MB");
+        written.put("contentType", "application/json");
+        written.put("overwrite", "false");
+        written.put("uploadConcurrency", "8");
+        written.put("verifyBlocks", "false");
+        written.put("readBlockSize", "16");
+        written.put("readBlockSizeUnit", "MB");
+        written.put("readConcurrency", "2");
+        written.put("readTimeout", "120");
+        written.put("checkpointFrequency", "64");
+
+        // Exactly what AzureBlobStreamWrite.settings() and AzureBlobStreamRead do.
+        Map<String, String> looked = new HashMap<>();
+        for (String parameter : AzureBlobSettings.PARAMETERS) {
+            String value = written.get(parameter);
+            if (value != null) {
+                looked.put(parameter, value);
+            }
+        }
+        assertEquals("a parameter the parser reads is missing from PARAMETERS, so no operator will"
+                + " ever look it up: " + difference(written, looked), written.size(), looked.size());
+
+        AzureBlobSettings s = AzureBlobSettings.from(looked, OP);
+        assertEquals("blockSizeUnit must apply", 32 * MIB, s.configuredBlockSize().longValue());
+        assertEquals("readBlockSizeUnit must apply", 16 * MIB, s.readBlockSize());
+        assertEquals("checkpointFrequency must arrive", 64, s.checkpointFrequency());
+        assertEquals(8, s.uploadConcurrency());
+        assertEquals(2, s.readConcurrency());
+        assertEquals("application/json", s.contentType());
+    }
+
+    private static String difference(Map<String, String> written, Map<String, String> looked) {
+        return written.keySet().stream().filter(k -> !looked.containsKey(k)).sorted().toList()
+                .toString();
+    }
+
     @Test
     public void readsTheMandatoryPair() {
         AzureBlobSettings s = AzureBlobSettings.from(params(), OP);
